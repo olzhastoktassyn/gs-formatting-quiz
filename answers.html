@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GS Formatting Answers</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    <div>
+      <h1>GS Formatting — Correct answers</h1>
+      <p class="sub">Google Sheets Formatting chapter test</p>
+    </div>
+  </header>
+  <div id="locked" class="card hidden">
+    <p><b>The answers are not open yet.</b></p>
+    <p class="sub">Your teacher will open them after everyone finishes the test.</p>
+  </div>
+  <div id="list" class="card hidden"></div>
+  <div id="err" class="msg err hidden"></div>
+  <footer class="foot"><a href="results.html">Results</a> · <a href="./">Test</a></footer>
+</div>
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script src="questions.js"></script>
+<script>
+(async function () {
+  const $ = id => document.getElementById(id);
+  try {
+    const r = await QuizAPI.get({ action: "answers", quizId: QUIZ_CONFIG.QUIZ_ID });
+    if (!r.ok) throw new Error(r.error);
+    if (!r.released) { $("locked").classList.remove("hidden"); return; }
+    const box = $("list"); box.classList.remove("hidden");
+    window.QUIZ_QUESTIONS.forEach((q, n) => {
+      const k = r.key[q.id] || {};
+      const item = document.createElement("div"); item.className = "ans-item";
+      const meta = document.createElement("div"); meta.className = "qmeta";
+      meta.innerHTML = '<span>Question ' + (n + 1) + '</span><span class="tag ' + q.level + '">' + q.level + '</span><span>' + q.topic + '</span>';
+      const p = document.createElement("p"); p.className = "qtext"; p.style.margin = "0"; p.textContent = q.q;
+      const ol = document.createElement("ol"); ol.type = "A";
+      q.options.forEach(o => { const li = document.createElement("li"); li.textContent = o + (o === k.answer ? "  ✓" : ""); if (o === k.answer) li.className = "right"; ol.appendChild(li); });
+      const why = document.createElement("div"); why.className = "why"; why.textContent = k.why || "";
+      item.append(meta, p, ol, why); box.appendChild(item);
+    });
+  } catch (e) {
+    $("err").textContent = e.message === "NOT_CONFIGURED" ? "Not connected to the results sheet yet." : "Could not load answers: " + e.message;
+    $("err").classList.remove("hidden");
+  }
+})();
+</script>
+</body>
+</html>

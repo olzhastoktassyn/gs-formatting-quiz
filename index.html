@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GS Formatting Quiz</title>
+<meta name="description" content="Google Sheets Formatting chapter test — 20 questions, 20 minutes.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    <div>
+      <h1>Google Sheets: Formatting</h1>
+      <p class="sub">Chapter test · 20 questions · 20 minutes</p>
+    </div>
+  </header>
+
+  <!-- START -->
+  <section id="s-start" class="hidden">
+    <div class="card stack">
+      <div>
+        <label class="field" for="name">Your full name</label>
+        <input id="name" type="text" autocomplete="name" placeholder="e.g. Aruzhan Serikova" maxlength="60">
+      </div>
+      <div>
+        <span class="field" style="display:block;font-weight:600;margin-bottom:6px">Your group</span>
+        <div class="seg" id="groups"></div>
+      </div>
+      <ul class="rules">
+        <li>20 questions: 10 easy, 5 medium, 5 hard. Each correct answer = 1 point.</li>
+        <li>You have <b>20 minutes</b>. When time is up, the test is submitted automatically.</li>
+        <li><b>One attempt only.</b> You cannot restart the test on this device.</li>
+        <li>Stay on this page. Leaving the tab is recorded.</li>
+      </ul>
+      <button class="primary" id="btn-start">Start the test</button>
+      <div id="start-msg" class="msg hidden"></div>
+    </div>
+  </section>
+
+  <!-- QUIZ -->
+  <section id="s-quiz" class="hidden">
+    <div class="bar">
+      <div class="progress" aria-hidden="true"><div id="prog"></div></div>
+      <div class="timer" id="timer" aria-live="off">20:00</div>
+    </div>
+    <div class="card">
+      <div class="qmeta"><span id="qnum"></span><span class="tag" id="qlevel"></span></div>
+      <p class="qtext" id="qtext"></p>
+      <div class="opts" id="opts" role="radiogroup" aria-labelledby="qtext"></div>
+      <div class="nav">
+        <button id="btn-prev">← Back</button>
+        <button id="btn-next" class="primary">Next →</button>
+      </div>
+      <div class="dots" id="dots" aria-label="Jump to question"></div>
+    </div>
+    <div id="quiz-msg" class="msg hidden"></div>
+  </section>
+
+  <!-- RESULT -->
+  <section id="s-result" class="hidden">
+    <div class="card">
+      <p class="sub" id="r-who"></p>
+      <div class="score" id="r-score"></div>
+      <p id="r-pct" class="sub"></p>
+      <div class="split">
+        <div><b id="r-easy">–</b><span>Easy</span></div>
+        <div><b id="r-medium">–</b><span>Medium</span></div>
+        <div><b id="r-hard">–</b><span>Hard</span></div>
+      </div>
+      <p class="msg info">Your result is saved. Correct answers will be shown by your teacher later.</p>
+    </div>
+  </section>
+
+  <!-- SENDING / ERRORS -->
+  <section id="s-send" class="hidden">
+    <div class="card">
+      <p id="send-text"><b>Submitting your answers…</b></p>
+      <div id="send-msg" class="msg hidden"></div>
+      <button class="primary hidden" id="btn-retry" style="margin-top:12px">Try again</button>
+    </div>
+  </section>
+
+  <footer class="foot">JIHC · Google Sheets course</footer>
+</div>
+
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script src="questions.js"></script>
+<script>
+(function () {
+  const cfg = window.QUIZ_CONFIG;
+  const Q = window.QUIZ_QUESTIONS;
+  const byId = Object.fromEntries(Q.map(q => [q.id, q]));
+  const KEY = "gsq:" + cfg.QUIZ_ID;
+  const $ = id => document.getElementById(id);
+  const DURATION = cfg.DURATION_MIN * 60 * 1000;
+  let state = null, tick = null, group = null;
+
+  // ---------- storage ----------
+  function store(s) { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} }
+  function load() { try { return JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) { return null; } }
+  function deviceId() {
+    let id = null;
+    try { id = localStorage.getItem("gsq:device"); } catch (e) {}
+    if (!id) id = cookieDevice();
+    if (id) { try { localStorage.setItem("gsq:device", id); } catch (e) {} }
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+      try { localStorage.setItem("gsq:device", id); } catch (e) {}
+    }
+    // keep a copy in a cookie too, so clearing only one of them is not enough
+    document.cookie = "gsq_device=" + id + "; max-age=31536000; path=/; SameSite=Lax";
+    return id;
+  }
+  function cookieDevice() {
+    const m = document.cookie.match(/(?:^|; )gsq_device=([^;]+)/);
+    return m ? m[1] : null;
+  }
+
+  function shuffle(a) {
+    a = a.slice();
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+    return a;
+  }
+  function show(id) {
+    ["s-start", "s-quiz", "s-result", "s-send"].forEach(s => $(s).classList.toggle("hidden", s !== id));
+    window.scrollTo(0, 0);
+  }
+  function msg(el, text, kind) {
+    el.textContent = text; el.className = "msg " + (kind || "err"); el.classList.toggle("hidden", !text);
+  }
+  function cleanName(s) { return s.replace(/\s+/g, " ").trim(); }
+
+  // ---------- start screen ----------
+  cfg.GROUPS.forEach(g => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = g; b.setAttribute("aria-pressed", "false");
+    b.onclick = () => {
+      group = g;
+      [...$("groups").children].forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    };
+    $("groups").appendChild(b);
+  });
+
+  $("btn-start").onclick = async () => {
+    const name = cleanName($("name").value);
+    const m = $("start-msg");
+    if (name.length < 3 || name.split(" ").length < 2) return msg(m, "Please write your first name and last name.");
+    if (!group) return msg(m, "Please choose your group.");
+    if (!QuizAPI.configured()) return msg(m, "The test is not connected to the results sheet yet. Tell your teacher.");
+    const btn = $("btn-start");
+    btn.disabled = true; msg(m, "Checking…", "info");
+    try {
+      const r = await QuizAPI.get({ action: "check", quizId: cfg.QUIZ_ID, name, group, device: deviceId() });
+      if (!r.ok) throw new Error(r.error || "error");
+      if (r.taken) {
+        btn.disabled = false;
+        return msg(m, r.reason === "device"
+          ? "This device has already been used to take the test. One attempt per student."
+          : "A student with this name in " + group + " has already taken the test.");
+      }
+    } catch (e) {
+      btn.disabled = false;
+      return msg(m, "Cannot connect to the server. Check the internet and try again.");
+    }
+    state = {
+      status: "progress", name, group,
+      startedAt: Date.now(),
+      order: shuffle(Q.map(q => q.id)),
+      optOrder: Object.fromEntries(Q.map(q => [q.id, shuffle(q.options.map((_, i) => i))])),
+      answers: {}, cur: 0, tabSwitches: 0
+    };
+    store(state);
+    startQuiz();
+  };
+
+  // ---------- quiz ----------
+  function startQuiz() {
+    show("s-quiz");
+    renderDots();
+    render();
+    updateTimer();
+    tick = setInterval(updateTimer, 500);
+  }
+  function remaining() { return state.startedAt + DURATION - Date.now(); }
+  function updateTimer() {
+    const ms = Math.max(0, remaining());
+    const s = Math.ceil(ms / 1000);
+    $("timer").textContent = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+    $("timer").classList.toggle("low", s <= 120);
+    if (ms <= 0) { clearInterval(tick); submit(true); }
+  }
+  function render() {
+    const id = state.order[state.cur], q = byId[id];
+    $("qnum").textContent = "Question " + (state.cur + 1) + " of " + Q.length;
+    $("qlevel").textContent = q.level; $("qlevel").className = "tag " + q.level;
+    $("qtext").textContent = q.q;
+    const box = $("opts"); box.innerHTML = "";
+    state.optOrder[id].forEach(i => {
+      const text = q.options[i];
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "opt"; b.setAttribute("role", "radio");
+      b.setAttribute("aria-checked", String(state.answers[id] === text));
+      const dot = document.createElement("span"); dot.className = "dot";
+      const t = document.createElement("span"); t.textContent = text;
+      b.append(dot, t);
+      b.onclick = () => { state.answers[id] = text; store(state); render(); };
+      box.appendChild(b);
+    });
+    $("btn-prev").disabled = state.cur === 0;
+    const last = state.cur === Q.length - 1;
+    $("btn-next").textContent = last ? "Finish test" : "Next →";
+    const answered = Object.keys(state.answers).length;
+    $("prog").style.width = (answered / Q.length * 100) + "%";
+    [...$("dots").children].forEach((d, i) => {
+      d.classList.toggle("ans", state.answers[state.order[i]] !== undefined);
+      d.classList.toggle("cur", i === state.cur);
+    });
+  }
+  function renderDots() {
+    const box = $("dots"); box.innerHTML = "";
+    state.order.forEach((_, i) => {
+      const d = document.createElement("button");
+      d.type = "button"; d.textContent = i + 1;
+      d.onclick = () => { state.cur = i; store(state); render(); };
+      box.appendChild(d);
+    });
+  }
+  $("btn-prev").onclick = () => { if (state.cur > 0) { state.cur--; store(state); render(); } };
+  $("btn-next").onclick = () => {
+    if (state.cur < Q.length - 1) { state.cur++; store(state); render(); return; }
+    const left = Q.length - Object.keys(state.answers).length;
+    const text = left ? "You have " + left + " unanswered question(s). Finish anyway?" : "Finish the test and submit your answers?";
+    if (confirm(text)) submit(false);
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (state && state.status === "progress" && document.visibilityState === "hidden") {
+      state.tabSwitches = (state.tabSwitches || 0) + 1; store(state);
+    }
+  });
+
+  // ---------- submit ----------
+  async function submit(auto) {
+    if (!state || state.status === "done") return;
+    clearInterval(tick);
+    if (state.status !== "submitting") {
+      state.status = "submitting";
+      state.finishedAt = Math.min(Date.now(), state.startedAt + DURATION);
+      state.auto = !!auto;
+      store(state);
+    }
+    show("s-send");
+    $("send-text").innerHTML = "<b>" + (state.auto ? "Time is up. " : "") + "Submitting your answers…</b>";
+    msg($("send-msg"), "");
+    $("btn-retry").classList.add("hidden");
+    try {
+      const r = await QuizAPI.post({
+        action: "submit", quizId: cfg.QUIZ_ID,
+        name: state.name, group: state.group, device: deviceId(),
+        answers: state.answers, startedAt: state.startedAt, finishedAt: state.finishedAt,
+        tabSwitches: state.tabSwitches || 0, auto: state.auto
+      });
+      if (!r.ok && r.error === "ALREADY_TAKEN") {
+        state.status = "done"; state.result = null; store(state);
+        $("send-text").innerHTML = "<b>Not saved.</b>";
+        return msg($("send-msg"), r.reason === "device"
+          ? "This device was already used for the test."
+          : "A student with this name in this group has already taken the test.");
+      }
+      if (!r.ok) throw new Error(r.error || "error");
+      state.status = "done"; state.result = r; store(state);
+      showResult();
+    } catch (e) {
+      $("send-text").innerHTML = "<b>Your answers are kept on this device, but not sent yet.</b>";
+      msg($("send-msg"), "No connection to the server. Check the internet, then press Try again. Do not close this page.");
+      $("btn-retry").classList.remove("hidden");
+    }
+  }
+  $("btn-retry").onclick = () => submit(state.auto);
+
+  function showResult() {
+    const r = state.result;
+    show("s-result");
+    $("r-who").textContent = state.name + " · " + state.group;
+    if (!r) { $("r-score").textContent = "—"; return; }
+    $("r-score").innerHTML = r.score + " <small>/ " + r.total + "</small>";
+    $("r-pct").textContent = r.percent + "% correct";
+    ["easy", "medium", "hard"].forEach(l => {
+      const v = r.byLevel && r.byLevel[l];
+      $("r-" + l).textContent = v ? v[0] + " / " + v[1] : "–";
+    });
+  }
+
+  // ---------- boot ----------
+  function boot() {
+    deviceId();
+    state = load();
+    if (state && state.status === "done") return showResult();
+    if (state && state.status === "submitting") return submit(state.auto);
+    if (state && state.status === "progress") {
+      if (remaining() <= 0) return submit(true);
+      return startQuiz();
+    }
+    state = null;
+    show("s-start");
+    if (!QuizAPI.configured()) msg($("start-msg"), "The test is not connected to the results sheet yet. Tell your teacher.");
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GS Formatting Results</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap wide">
+  <header class="top">
+    <div class="logo" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    <div>
+      <h1>GS Formatting — Results</h1>
+      <p class="sub" id="updated">Loading…</p>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><b id="st-count">–</b><span>Students</span></div>
+    <div class="stat"><b id="st-avg">–</b><span>Average score</span></div>
+    <div class="stat"><b id="st-best">–</b><span>Best score</span></div>
+    <div class="stat"><b id="st-pass">–</b><span>Scored 60% or more</span></div>
+  </div>
+
+  <div class="toolbar">
+    <div class="seg" id="gfilter"></div>
+    <input type="text" id="search" placeholder="Search name…">
+    <button id="btn-csv">Download CSV</button>
+    <button id="btn-refresh">Refresh</button>
+  </div>
+
+  <div class="tablebox">
+    <table>
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"><tr><td colspan="11">Loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div id="err" class="msg err hidden"></div>
+  <footer class="foot">Updates automatically every 20 seconds · <a href="./">Back to the test</a></footer>
+</div>
+
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+(function () {
+  const cfg = window.QUIZ_CONFIG;
+  const $ = id => document.getElementById(id);
+  const cols = [
+    { k: "rank", t: "#", num: true },
+    { k: "name", t: "Name" },
+    { k: "group", t: "Group" },
+    { k: "score", t: "Score", num: true },
+    { k: "percent", t: "%", num: true },
+    { k: "easy", t: "Easy", num: true },
+    { k: "medium", t: "Medium", num: true },
+    { k: "hard", t: "Hard", num: true },
+    { k: "durationSec", t: "Time used", num: true },
+    { k: "tabSwitches", t: "Left tab", num: true },
+    { k: "time", t: "Submitted" }
+  ];
+  let rows = [], groupF = "All", sortK = "score", sortDir = -1;
+
+  ["All"].concat(cfg.GROUPS).forEach(g => {
+    const b = document.createElement("button");
+    b.textContent = g; b.setAttribute("aria-pressed", String(g === groupF));
+    b.onclick = () => { groupF = g; [...$("gfilter").children].forEach(x => x.setAttribute("aria-pressed", String(x === b))); draw(); };
+    $("gfilter").appendChild(b);
+  });
+  cols.forEach(c => {
+    const th = document.createElement("th");
+    th.textContent = c.t; if (c.num) th.className = "num";
+    th.onclick = () => { if (c.k === "rank") return; sortDir = sortK === c.k ? -sortDir : (c.num ? -1 : 1); sortK = c.k; draw(); };
+    $("thead").appendChild(th);
+  });
+  $("search").oninput = draw;
+  $("btn-refresh").onclick = loadData;
+  $("btn-csv").onclick = csv;
+
+  const fmtDur = s => s == null || s === "" ? "–" : Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+  const fmtTime = iso => { if (!iso) return "–"; const d = new Date(iso); return d.toLocaleString([], { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); };
+  const pill = p => "pill " + (p >= 80 ? "g" : p >= 60 ? "a" : "r");
+
+  function visible() {
+    const q = $("search").value.trim().toLowerCase();
+    let r = rows.filter(x => (groupF === "All" || x.group === groupF) && (!q || x.name.toLowerCase().includes(q)));
+    // rank by score (desc), then by faster time
+    const ranked = r.slice().sort((a, b) => b.score - a.score || a.durationSec - b.durationSec);
+    ranked.forEach((x, i) => x.rank = i + 1);
+    r.sort((a, b) => {
+      const A = a[sortK], B = b[sortK];
+      if (typeof A === "number" && typeof B === "number") return (A - B) * sortDir || a.rank - b.rank;
+      return String(A).localeCompare(String(B)) * sortDir;
+    });
+    return r;
+  }
+  function draw() {
+    const r = visible();
+    const tb = $("tbody"); tb.innerHTML = "";
+    if (!r.length) { tb.innerHTML = '<tr><td colspan="11">No results yet.</td></tr>'; }
+    r.forEach(x => {
+      const tr = document.createElement("tr");
+      cols.forEach(c => {
+        const td = document.createElement("td"); if (c.num) td.className = "num";
+        let v = x[c.k];
+        if (c.k === "score") { v = x.score + " / " + x.total; }
+        if (c.k === "percent") { const s = document.createElement("span"); s.className = pill(x.percent); s.textContent = x.percent + "%"; td.appendChild(s); tr.appendChild(td); return; }
+        if (["easy", "medium", "hard"].includes(c.k)) v = x[c.k] + " / " + x[c.k + "Total"];
+        if (c.k === "durationSec") v = fmtDur(x.durationSec) + (x.auto ? " ⏱" : "");
+        if (c.k === "tabSwitches") { v = x.tabSwitches; if (v > 0) td.classList.add("warnflag"); }
+        if (c.k === "time") v = fmtTime(x.time);
+        td.textContent = v;
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    const n = r.length;
+    $("st-count").textContent = n;
+    $("st-avg").textContent = n ? (r.reduce((s, x) => s + x.score, 0) / n).toFixed(1) + " / 20" : "–";
+    $("st-best").textContent = n ? Math.max(...r.map(x => x.score)) + " / 20" : "–";
+    $("st-pass").textContent = n ? r.filter(x => x.percent >= 60).length + " of " + n : "–";
+  }
+  function csv() {
+    const r = visible();
+    const head = ["Rank","Name","Group","Score","Total","Percent","Easy","Medium","Hard","Time used (s)","Left tab","Auto-submitted","Submitted"];
+    const lines = [head].concat(r.map(x => [x.rank, x.name, x.group, x.score, x.total, x.percent, x.easy, x.medium, x.hard, x.durationSec, x.tabSwitches, x.auto ? "yes" : "no", x.time]));
+    const text = lines.map(l => l.map(v => '"' + String(v ?? "").replace(/"/g, '""') + '"').join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿" + text], { type: "text/csv" }));
+    a.download = "gs-formatting-results.csv"; a.click();
+  }
+  async function loadData() {
+    if (!QuizAPI.configured()) { $("updated").textContent = "Not connected to the results sheet yet."; $("tbody").innerHTML = '<tr><td colspan="11">—</td></tr>'; return; }
+    try {
+      const r = await QuizAPI.get({ action: "results", quizId: cfg.QUIZ_ID });
+      if (!r.ok) throw new Error(r.error);
+      rows = r.rows;
+      $("err").classList.add("hidden");
+      $("updated").textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      draw();
+    } catch (e) {
+      $("err").textContent = "Could not load results: " + e.message; $("err").classList.remove("hidden");
+    }
+  }
+  loadData();
+  setInterval(loadData, 20000);
+})();
+</script>
+</body>
+</html>
